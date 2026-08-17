@@ -1,0 +1,14 @@
+sentence-transformers
+langchain
+langchain-openai
+langchain-core
+openai
+langchain-huggingface
+langchain-chroma
+chromadb
+python-dotenv
+tqdm
+numpy
+pandas
+scikit-learn
+scipy

@@ -1,0 +1,56 @@
+# ================= 密钥与环境（绝不提交） =================
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets.json
+
+# ================= Python =================
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+build/
+dist/
+
+# ================= Jupyter =================
+.ipynb_checkpoints/
+# 原始探索 Notebook（输出里含本地绝对路径，不提交）
+teach.ipynb
+
+# ================= 向量库（体积大，可由数据重建） =================
+chroma_*/
+
+# ================= 数据集（私有内容，自行准备，不提交） =================
+real_10k.jsonl
+synth_10k.jsonl
+real_8k_members.jsonl
+real_2k_nonmembers.jsonl
+real_10k_split.json
+
+# ================= 实验输出（可重新生成） =================
+member_semantic_test*
+nonmember_semantic_test*
+evaluation_report*.json
+
+# ================= IDE / 编辑器 =================
+.vscode/
+.idea/
+*.swp
+
+# ================= 遗留运行时状态 =================
+.langgraph_api/
+langgraph.json
+
+# ================= 系统文件 =================
+.DS_Store
+Thumbs.db
+desktop.ini
