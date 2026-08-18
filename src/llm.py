@@ -18,10 +18,11 @@ def create_chat_model(config: Config):
 
     api_key = config.api_key or os.getenv(config.api_key_env, "")
     base_url = config.base_url or os.getenv(config.base_url_env, "")
+    model = config.chat_model or os.getenv(config.chat_model_env, "")
 
-    if not api_key or not base_url:
+    if not api_key or not base_url or not model:
         raise RuntimeError(
-            f"未配置 api_key / base_url（config 或环境变量）。"
+            f"未配置 chat_model / api_key / base_url（config 或环境变量）。"
         )
 
     from langchain.chat_models import init_chat_model
@@ -32,7 +33,7 @@ def create_chat_model(config: Config):
         extra_body["chat_template_kwargs"] = {"enable_thinking": False}
 
     return init_chat_model(
-        model=config.chat_model,
+        model=model,
         model_provider="openai",
         api_key=api_key,
         base_url=base_url,

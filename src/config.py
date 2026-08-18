@@ -37,14 +37,17 @@ class Config:
     persist_directory: Path = Path("./chroma_bge_base_en_v15_9500")
     collection_name: str = "real_9500_bge_base_en"
 
-    # ---- 大语言模型（本地部署）----
-    chat_model: str = "qwen3-4b"
+    # ---- 大语言模型（OpenAI 兼容接口，通过 .env 配置）----
+    # chat_model / api_key / base_url 留空时，从环境变量（api_key_env /
+    # base_url_env / chat_model_env）读取；不建议在公开仓库中写死本地模型参数。
+    chat_model: str = ""
     temperature: float = 0.0
     enable_thinking: bool = False
-    api_key: str = "EMPTY"
-    base_url: str = "http://localhost:6006/v1"
+    api_key: str = ""
+    base_url: str = ""
     api_key_env: str = "api_key"
     base_url_env: str = "base_url"
+    chat_model_env: str = "chat_model"
 
     # ---- 测试 ----
     member_test_count: int = 50
@@ -78,7 +81,7 @@ class Config:
     dp_threshold_ratio: float = 0.5
     dp_answer_threshold_ratio: float = 0.0
     # 严格逐 token 解释需要 assistant 消息的 "partial": True 续写能力（DashScope 专有）。
-    # 本地 vLLM（localhost:6006）不识别该字段，且 max_tokens=1 贪心会退化成
+    # 本地 vLLM（OpenAI 兼容）不识别该字段，且 max_tokens=1 贪心会退化成
     # "TheTheThe..."，故本地置 False，走「一次性生成 + 逐词 DP 选择」回退路径。
     dp_strict_per_token: bool = False
     max_explanation_tokens: int = 24

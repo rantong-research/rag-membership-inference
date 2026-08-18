@@ -97,7 +97,7 @@ def create_embedding_model():
 
 ### 4.3 大语言模型
 
-通过 OpenAI 兼容接口调用 `qwen3-4b`（本地部署；也可换成任意兼容模型），关闭思考模式以降低输出波动：
+通过 OpenAI 兼容接口调用本地部署的 32B 模型（也可换成任意 OpenAI 兼容模型），关闭思考模式以降低输出波动：
 
 ```python
 import os
@@ -107,7 +107,7 @@ from langchain.chat_models import init_chat_model
 load_dotenv()
 
 chat_model = init_chat_model(
-    model="qwen3-4b",
+    model=os.getenv("chat_model"),
     model_provider="openai",
     api_key=os.getenv("api_key"),
     base_url=os.getenv("base_url"),
@@ -119,6 +119,7 @@ chat_model = init_chat_model(
 根目录 `.env`：
 
 ```dotenv
+chat_model=YOUR_MODEL_NAME
 api_key=YOUR_API_KEY
 base_url=YOUR_OPENAI_COMPATIBLE_BASE_URL
 ```
@@ -193,7 +194,7 @@ S = (1/m) · Σ s_i     # m = 该文档的问题数量（初步实验用 3）
 ## 5. 项目结构
 
 ```text
-private_qwen/
+rag-membership-inference/
 ├── README.md
 ├── .env                      # 密钥，不提交
 ├── .gitignore
@@ -284,6 +285,7 @@ python -c "import torch; print('cuda:', torch.cuda.is_available()); print('gpu:'
 复制 `.env.example` 为 `.env` 并填入你的配置（`.env` 已被 `.gitignore` 忽略，不会提交）：
 
 ```dotenv
+chat_model=YOUR_MODEL_NAME
 api_key=YOUR_API_KEY
 base_url=YOUR_OPENAI_COMPATIBLE_BASE_URL
 ```
@@ -316,7 +318,7 @@ python run_experiment_dp.py         # DP 对比方案（voter 集成 + 加噪）
 | Mann-Whitney U（双尾） | U=9838, p≈10⁻³⁶ |
 | 目标文档检索率 | 98.0% |
 
-### 7.2 DP 对比方案（qwen3-4b，50 成员 + 50 非成员）
+### 7.2 DP 对比方案（本地 32B 模型，50 成员 + 50 非成员）
 
 DP 机制（`src/dp_rag.py`）：n=30 个 voter 各持 2 个私有片段，与 1 个无上下文的 baseline 比对；答案/解释的直方图差异超过阈值才加 Laplace 噪声并取 argmax（稀疏向量技术），每次查询独立预算 ε=40、单次私有使用 ε=2。
 
@@ -370,7 +372,7 @@ DP 机制（`src/dp_rag.py`）：n=30 个 voter 各持 2 个私有片段，与 1
   "retrieve_k": 10,
   "questions_per_document": 3,
   "unknown_penalty": 0.5,
-  "chat_model": "qwen3-4b",
+  "chat_model": "本地 32B 模型",
   "temperature": 0,
   "enable_thinking": false
 }

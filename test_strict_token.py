@@ -19,7 +19,7 @@ from openai import OpenAI
 
 load_dotenv()
 
-MODEL = "qwen3.5-plus"          # 可改 qwen3.8-max / qwen-plus / qwen3-4b
+MODEL = os.getenv("chat_model", "")   # 支持 partial 的服务（如 DashScope）
 MAX_STEPS = 24
 
 client = OpenAI(

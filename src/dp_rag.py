@@ -29,6 +29,7 @@
 from __future__ import annotations
 
 import math
+import os
 import random
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
@@ -148,16 +149,31 @@ def select_answer(
 # 本地模型客户端（OpenAI 兼容）
 # ---------------------------------------------------------------------------
 
+def _resolve_model(config: Config) -> str:
+    """模型名：config 为空时回退到环境变量。"""
+    return config.chat_model or os.getenv(config.chat_model_env, "")
+
+
+def _resolve_base_url(config: Config) -> str:
+    return config.base_url or os.getenv(config.base_url_env, "")
+
+
+def _resolve_api_key(config: Config) -> str:
+    return config.api_key or os.getenv(config.api_key_env, "")
+
+
 def create_client(config: Config):
-    """创建指向本地模型的 OpenAI 兼容客户端。"""
+    """创建指向 OpenAI 兼容接口的客户端（模型/端点/密钥来自 config 或 .env）。"""
     from openai import OpenAI
 
-    return OpenAI(base_url=config.base_url, api_key=config.api_key)
+    return OpenAI(
+        base_url=_resolve_base_url(config), api_key=_resolve_api_key(config)
+    )
 
 
 def _chat(client, config: Config, messages: list[dict], max_tokens: int):
     kwargs: dict[str, Any] = {
-        "model": config.chat_model,
+        "model": _resolve_model(config),
         "messages": messages,
         "temperature": config.temperature,
         "max_tokens": max_tokens,

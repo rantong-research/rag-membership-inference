@@ -1,4 +1,4 @@
-"""测试本地 OpenAI 兼容服务（vLLM）是否支持 assistant 消息的 "partial" 字段。
+"""测试 OpenAI 兼容服务是否支持 assistant 消息的 "partial" 字段。
 
 背景："partial": True 是 DashScope 专有字段，用于标记 assistant 消息是「未完成前缀」，
 要求模型从该前缀继续生成下一个 token。严格逐 token 的 DP 解释依赖此能力。
@@ -9,23 +9,31 @@
   C) 一次性生成 (max_tokens=32) —— 对照：确认模型本身能生成连贯文本
 
 判定：
-  - 若 A 与 B 输出几乎相同 → partial 字段被本地服务忽略（不支持）。
+  - 若 A 与 B 输出几乎相同 → partial 字段被服务忽略（不支持）。
   - 若 A/B 逐 token 退化成 "TheTheThe..." 而 C 连贯 → 退化来自 max_tokens=1 贪心本身，
-    与 partial 无关。结论：本地应关闭严格逐 token（dp_strict_per_token=False），
+    与 partial 无关。结论：该服务应关闭严格逐 token（dp_strict_per_token=False），
     改走「一次性生成 + 逐词 DP 选择」。
 
 用法：python test_partial_local.py [base_url] [model]
-默认：http://localhost:6006/v1  qwen3-4b
+      未传参时回退到环境变量 base_url / chat_model。
 """
+import os
 import sys
 
 from openai import OpenAI
 
-BASE_URL = sys.argv[1] if len(sys.argv) > 1 else "http://localhost:6006/v1"
-MODEL = sys.argv[2] if len(sys.argv) > 2 else "qwen3-4b"
+BASE_URL = sys.argv[1] if len(sys.argv) > 1 else os.environ.get("base_url", "")
+MODEL = sys.argv[2] if len(sys.argv) > 2 else os.environ.get("chat_model", "")
+API_KEY = os.environ.get("api_key", "test")
+
+if not BASE_URL or not MODEL:
+    print("用法：python test_partial_local.py <base_url> <model>")
+    print("或设置环境变量 base_url / chat_model。")
+    sys.exit(1)
+
 MAX_STEPS = 12
 
-client = OpenAI(base_url=BASE_URL, api_key="EMPTY")
+client = OpenAI(base_url=BASE_URL, api_key=API_KEY)
 
 BASE_MESSAGES = [
     {"role": "system", "content": "Explain a yes/no/unknown answer in one short sentence of 3-8 words."},
