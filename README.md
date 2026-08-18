@@ -24,8 +24,8 @@
 ```mermaid
 flowchart TD
     A[real_10k.jsonl] --> B[固定随机种子划分数据]
-    B --> C[8,000 条成员文档]
-    B --> D[2,000 条非成员文档]
+    B --> C[9,500 条成员文档]
+    B --> D[500 条非成员文档]
     C --> E[Embedding 向量化]
     E --> F[Chroma 知识库]
     C --> G[抽取成员测试样本]
@@ -57,9 +57,9 @@ flowchart TD
 ### 4.1 数据划分
 
 - 读取 `real_10k.jsonl`（约 1 万条英文漏洞描述）；
-- 固定种子 `seed=42` 均匀随机抽取 8,000 条作为知识库成员，剩余 2,000 条作为非成员候选；
+- 固定种子 `seed=42` 均匀随机抽取 9,500 条作为知识库成员，剩余 500 条作为非成员候选；
 - 用原始行号 `source_line_xxx` 标识文档，便于验证检索结果；
-- 划分结果持久化到 `real_8k_members.jsonl`、`real_2k_nonmembers.jsonl` 与 `real_10k_split.json`，确保换模型重跑仍用完全相同的数据划分。
+- 划分结果持久化到 `real_9500_members.jsonl`、`real_500_nonmembers.jsonl` 与 `real_10k_split.json`，确保换模型重跑仍用完全相同的数据划分。
 
 ### 4.2 Embedding 与向量库
 
@@ -93,11 +93,11 @@ def create_embedding_model():
 - `show_progress_bar` 不要放入 `encode_kwargs`，否则报 `SentenceTransformer.encode() got multiple values for keyword argument 'show_progress_bar'`；
 - 换 Embedding 模型后必须换新持久化目录并重建，不能混用旧向量。
 
-> ⚠️ 当前仓库的 `chroma_real_8k/`（集合 `real_8k_members`）实际是用 `BAAI/bge-small-zh-v1.5`（**512 维**）构建的（可由 Chroma 元数据 `dimension=512` 验证），与推荐不符。改用 `bge-base-en-v1.5`（768 维）时必须重建并换目录，不能把不同维度向量混在同一集合。
+> ⚠️ 当前向量库为 `chroma_bge_base_en_v15_9500/`（集合 `real_9500_bge_base_en`），用 `BAAI/bge-base-en-v1.5`（768 维）构建。更换 Embedding 模型后必须重建并换新目录，不能把不同维度向量混在同一集合。
 
 ### 4.3 大语言模型
 
-通过 OpenAI 兼容接口调用 `qwen3.5-plus`，关闭思考模式以降低输出波动：
+通过 OpenAI 兼容接口调用 `qwen3-4b`（本地部署；也可换成任意兼容模型），关闭思考模式以降低输出波动：
 
 ```python
 import os
@@ -107,7 +107,7 @@ from langchain.chat_models import init_chat_model
 load_dotenv()
 
 chat_model = init_chat_model(
-    model="qwen3.5-plus",
+    model="qwen3-4b",
     model_provider="openai",
     api_key=os.getenv("api_key"),
     base_url=os.getenv("base_url"),
@@ -202,12 +202,12 @@ private_qwen/
 ├── run_experiment.py         # 端到端实验入口（需 GPU）
 ├── real_10k.jsonl            # 原始语料
 ├── real_10k_split.json       # 数据划分清单
-├── real_8k_members.jsonl     # 成员文档
-├── real_2k_nonmembers.jsonl  # 非成员文档
+├── real_9500_members.jsonl   # 成员文档
+├── real_500_nonmembers.jsonl # 非成员文档
 ├── member_semantic_test.{json,csv}
 ├── nonmember_semantic_test.{json,csv}
 ├── evaluation_report.json
-├── chroma_real_8k/           # 旧向量库（bge-small-zh, 512 维）
+├── chroma_bge_base_en_v15_9500/  # 向量库（bge-base-en, 768 维）
 ├── src/
 │   ├── config.py             # 集中配置
 │   ├── data.py               # 数据读取与划分
@@ -218,7 +218,10 @@ private_qwen/
 │   ├── rag.py                # RAG 回答与归一化
 │   ├── scoring.py            # 信号分数
 │   ├── evaluation.py         # 离线评估
-│   └── pipeline.py           # 端到端编排
+│   ├── pipeline.py           # 非 DP 端到端编排
+│   ├── dp_rag.py             # DP-RAG 核心（voter+baseline+加噪）
+│   ├── pipeline_dp.py        # DP 端到端编排
+│   └── reranker.py           # Cross-Encoder 重排序
 └── teach.ipynb               # 原始探索 Notebook
 ```
 
@@ -235,7 +238,10 @@ private_qwen/
 | `src/rag.py` | 检索增强回答 + 答案归一化 |
 | `src/scoring.py` | 信号分数（+1 / -λ / 0）与成员得分 |
 | `src/evaluation.py` | 离线统计（AUC / 阈值 / Bootstrap / Mann-Whitney） |
-| `src/pipeline.py` | 把以上模块串成端到端流程 |
+| `src/pipeline.py` | 非 DP 端到端编排 |
+| `src/dp_rag.py` | DP-RAG 核心：voter 集成 + baseline + 直方图加噪 + 预算 |
+| `src/pipeline_dp.py` | DP 端到端编排 |
+| `src/reranker.py` | Cross-Encoder 重排序（可选） |
 
 ## 6. 快速开始
 
@@ -243,7 +249,7 @@ private_qwen/
 
 ### 6.0 准备数据
 
-将 `real_10k.jsonl` 放在项目根目录（每行一个 JSON 对象，至少含 `text` 字段）。首次运行会按固定种子 `seed=42` 自动划分为 8000 条成员 + 2000 条非成员，并构建向量库。
+将 `real_10k.jsonl` 放在项目根目录（每行一个 JSON 对象，至少含 `text` 字段）。首次运行会按固定种子 `seed=42` 自动划分为 9500 条成员 + 500 条非成员，并构建向量库。
 
 ### 6.1 环境
 
@@ -289,42 +295,42 @@ base_url=YOUR_OPENAI_COMPATIBLE_BASE_URL
 python evaluate.py
 
 # 2) 完整实验：重新生成探测、检索、回答与评分（需 GPU + .env）
-python run_experiment.py            # 推荐 bge-base-en-v1.5（768 维）
-python run_experiment.py --legacy   # 兼容现有 chroma_real_8k（bge-small-zh, 512 维）
+python run_experiment.py            # 非 DP 基线
+python run_experiment_dp.py         # DP 对比方案（voter 集成 + 加噪）
 ```
 
 完整实验内部依次执行：划分数据 → 构建/加载向量库 → 抽样 → 生成探测 → RAG 回答 → 评分 → 评估，并输出 `member_semantic_test.*`、`nonmember_semantic_test.*` 与 `evaluation_report.json`。交互式探索可参考 `teach.ipynb`。
 
-## 7. 实验结果（初步）
+## 7. 实验结果
 
-> 当前仅各抽 5 篇成员/非成员、每篇 3 个问题（k=3），结果只能用于代码验证与趋势分析，不能作为最终结论。
+### 7.1 非 DP 基线（bge-base-en-v1.5，100 成员 + 100 非成员）
 
 | 指标 | 成员 | 非成员 |
 | --- | ---: | ---: |
-| 文档数 | 5 | 5 |
-| 平均 MIA 得分 | 0.4000 | -0.3667 |
-| 回答正确率 | 60.00% | 6.67% |
+| 平均 MIA 得分 | 0.9333 | -0.2100 |
+| 回答正确率 | 95.33% | 17.33% |
 
 | 指标 | 结果 |
 | --- | ---: |
-| 文档级 ROC-AUC | 0.8400 |
-| Mann-Whitney U（双尾） | U=21.00, p=0.0827 |
-| 得分均值差 Bootstrap 95% CI | [0.2325, 1.3000] |
+| 文档级 ROC-AUC | 0.9838 |
+| Mann-Whitney U（双尾） | U=9838, p≈10⁻³⁶ |
+| 目标文档检索率 | 98.0% |
 
-| 判定规则 | 准确率 | 精确率 | 成员召回率 | 假阳性率 |
-| --- | ---: | ---: | ---: | ---: |
-| `MIA Score > 0` | 80% | 100% | 60% | 0% |
-| `MIA Score >= 0` | 80% | 80% | 80% | 20% |
+### 7.2 DP 对比方案（qwen3-4b，50 成员 + 50 非成员）
 
-目标文档检索（仅成员）：
+| 指标 | 成员 | 非成员 |
+| --- | ---: | ---: |
+| 平均 MIA 得分 | 0.6133 | 0.4567 |
+| 回答正确率 | 66.67% | 56.38% |
 
-- 查询级检索率 46.67%，且命中时均位于 Top-1；
-- 检索命中时回答正确率 100%（7/7）；
-- 检索未命中时回答正确率仅 25%（2/8），其中存在摘要泄漏或靠相似文档猜测的情况，不能当作成员泄漏证据。
+| 指标 | 结果 |
+| --- | ---: |
+| 文档级 ROC-AUC（答案信号） | 0.5936 |
+| 文档级 ROC-AUC（私有使用率信号） | 0.6088 |
+| Mann-Whitney p | 0.094 |
+| 目标文档检索率 | 97.96% |
 
-回答分布（yes/no/unknown）：成员 5/4/6，非成员 0/2/13。
-
-> 以上数字均可由 `python evaluate.py` 复现。注意 p=0.0827 在 α=0.05 下**不显著**，原因是样本量太小（5+5）；阈值也须在独立验证集上选定后再报告测试集结果。
+> 对比：DP 机制把 MIA 的 ROC-AUC 从 0.98 压到约 0.59，显著削弱了成员推断能力，量化了「隐私保护 vs 系统效用」的权衡。
 
 ## 8. 结论与下一步
 
@@ -355,14 +361,14 @@ python run_experiment.py --legacy   # 兼容现有 chroma_real_8k（bge-small-zh
 ```json
 {
   "dataset": "real_10k.jsonl",
-  "member_size": 8000,
+  "member_size": 9500,
   "random_seed": 42,
   "embedding_model": "BAAI/bge-base-en-v1.5",
   "embedding_normalized": true,
   "retrieve_k": 10,
   "questions_per_document": 3,
   "unknown_penalty": 0.5,
-  "chat_model": "qwen3.5-plus",
+  "chat_model": "qwen3-4b",
   "temperature": 0,
   "enable_thinking": false
 }
@@ -373,7 +379,7 @@ python run_experiment.py --legacy   # 兼容现有 chroma_real_8k（bge-small-zh
 - 记录依赖版本、GPU 型号、运行时间；
 - 不同 Embedding 模型的向量距离不在同一空间，不可横向比较绝对距离。
 
-> 注：上表 `retrieve_k=10` 为当前 `config.py` 默认值；初步实验结果用的是 k=3。
+> 注：上表为**非 DP 基线**的默认配置（`retrieve_k=10`）。DP 对比方案使用 `n_voters=30`、`dp_retrieve_k=2`（每 voter 2 个片段，共粗召回 120 → 重排取 60），总预算 ε=40、单 token ε=2。
 
 ## 10. 常见问题
 
