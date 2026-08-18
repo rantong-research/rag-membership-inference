@@ -458,7 +458,7 @@ def _aggregate_explanation(
 ) -> tuple[str, int]:
     """一次性生成各 voter/baseline 的完整解释，再逐词做 DP 选择。
 
-    说明：4B 模型用 max_tokens=1 做严格自回归逐 token 会退化重复（如
+    说明：本地模型用 max_tokens=1 做严格自回归逐 token 会退化重复（如
     "AnswerAnswer..."），因此改为一次性生成完整短句（连贯），再在词粒度上
     套用「直方图 + 阈值 + 加噪」的逐 token 选择。
     """

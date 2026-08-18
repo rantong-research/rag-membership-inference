@@ -97,7 +97,12 @@ def create_embedding_model():
 
 ### 4.3 大语言模型
 
-通过 OpenAI 兼容接口调用本地部署的 32B 模型（也可换成任意 OpenAI 兼容模型），关闭思考模式以降低输出波动：
+实验测试过两种模型，均通过 OpenAI 兼容接口调用并关闭思考模式（`enable_thinking=False`）：
+
+1. **本地部署的 32B 模型**：vLLM 自建服务，用于本地化部署与 DP 隐私对比实验；
+2. **网络调用的 qwen3.5-plus**：云端接口，参数规模更大、回答更准确。
+
+切换模型只需修改 `.env` 中的 `chat_model` / `api_key` / `base_url`：
 
 ```python
 import os
