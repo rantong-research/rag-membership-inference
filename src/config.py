@@ -77,7 +77,10 @@ class Config:
     dp_per_token_budget: float = 2.0
     dp_threshold_ratio: float = 0.5
     dp_answer_threshold_ratio: float = 0.0
-    dp_strict_per_token: bool = True
+    # 严格逐 token 解释需要 assistant 消息的 "partial": True 续写能力（DashScope 专有）。
+    # 本地 vLLM（localhost:6006）不识别该字段，且 max_tokens=1 贪心会退化成
+    # "TheTheThe..."，故本地置 False，走「一次性生成 + 逐词 DP 选择」回退路径。
+    dp_strict_per_token: bool = False
     max_explanation_tokens: int = 24
     dp_random_seed: int = 2028
 
