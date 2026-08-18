@@ -71,4 +71,12 @@ def parse_json_object(text: str) -> dict[str, Any]:
     if start == -1 or end == -1:
         raise ValueError(f"模型没有返回 JSON 对象：{text}")
 
-    return json.loads(text[start:end + 1])
+    text = text[start:end + 1]
+
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        # 模型偶发输出非法转义（如 "\x"、"\ " 等）：把后面不跟合法转义字符的
+        # 单个反斜杠补成双反斜杠后重试，避免整个实验因一处坏 JSON 而中断。
+        fixed = re.sub(r'\\(?![\\"/bfnrtu])', r'\\\\', text)
+        return json.loads(fixed)

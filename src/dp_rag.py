@@ -4,7 +4,8 @@
 
 答案（分类，一次性）：
 1. n 个 voter 各用「查询 + 私有片段」输出 yes/no/unknown；baseline 只输入查询；
-2. 对 n 个 voter 答案做直方图，与 baseline 比对：差异数 > n/2 则对直方图加噪取 argmax（耗预算），否则用 baseline。
+2. 对 n 个 voter 答案做直方图，与 baseline 比对：差异数超过阈值
+   （dp_answer_threshold_ratio，默认 0，即任一 voter 与 baseline 不一致）则对直方图加噪取 argmax（耗预算），否则用 baseline。
 
 解释（严格逐 token，子词级自回归）：
 3. 维护共享前缀；每步让 baseline 与每个 voter 基于「查询(+私有片段)+答案+前缀」
@@ -94,7 +95,7 @@ def select_token(
     budget: BudgetTracker,
     rng: random.Random,
 ) -> tuple[str, bool, bool]:
-    """对单个 token 做「阈值判断 + 加噪选择」。
+    """通用 token 选择：直方图 + 阈值 + 加噪 argmax（用于解释的逐词选择）。
 
     返回 (selected, used_private, budget_available)。
     """
@@ -106,9 +107,33 @@ def select_token(
         return baseline_label, False, True
 
     if budget.consume():
-        selected = report_noisy_max(
-            dict(histogram), config.dp_per_token_budget, rng
-        )
+        selected = report_noisy_max(dict(histogram), config.dp_per_token_budget, rng)
+        return selected, True, True
+
+    return baseline_label, True, False
+
+
+def select_answer(
+    voter_labels: list[str],
+    baseline_label: str,
+    config: Config,
+    budget: BudgetTracker,
+    rng: random.Random,
+) -> tuple[str, bool, bool]:
+    """答案选择：阈值 + 加噪 argmax，排除 unknown（unknown 表示“无信息”）。"""
+    n = len(voter_labels)
+    histogram = Counter(voter_labels)
+    diff = n - histogram.get(baseline_label, 0)
+
+    if diff <= config.dp_answer_threshold_ratio * n:
+        return baseline_label, False, True
+
+    if budget.consume():
+        definite = {k: v for k, v in histogram.items() if k in {"yes", "no"}}
+        if definite:
+            selected = report_noisy_max(definite, config.dp_per_token_budget, rng)
+        else:
+            selected = baseline_label
         return selected, True, True
 
     return baseline_label, True, False
@@ -190,8 +215,7 @@ Answer the QUESTION using only general knowledge.
 
 Reply with exactly one word: yes, no, or unknown."""
 
-_EXPLAIN_SYSTEM = """You are writing a brief explanation for a yes/no/unknown answer.
-Write a short factual explanation in a few words."""
+_EXPLAIN_SYSTEM = """Explain a yes/no/unknown answer in one short sentence of 3-8 words."""
 
 
 def _normalize_answer(text: str) -> str:
@@ -233,21 +257,19 @@ def _explain_user(config: Config, query: str, chunks: list[Any], answer: str) ->
             f"[{i + 1}] {_truncate(doc.page_content, config.max_chunk_chars)}"
             for i, doc in enumerate(chunks)
         )
-        return f"""QUESTION:
-{query}
+        return f"""Question: {query}
 
-ANSWER: {answer}
+The answer is "{answer}".
 
-PRIVATE CONTEXTS:
+Contexts:
 {contexts}
 
-EXPLANATION:"""
-    return f"""QUESTION:
-{query}
+Reason:"""
+    return f"""Question: {query}
 
-ANSWER: {answer}
+The answer is "{answer}".
 
-EXPLANATION:"""
+Reason:"""
 
 
 def _explain_messages(
@@ -323,6 +345,11 @@ def _aggregate_explanation_strict(
     budget: BudgetTracker,
     rng: random.Random,
 ) -> tuple[str, int]:
+    """严格逐 token 自回归生成解释（每步 n+1 个请求并发）。
+
+    注意：4B 模型用 max_tokens=1 贪心续写易退化重复，可用
+    config.dp_strict_per_token=False 切到一次性生成 + 逐词选择。
+    """
     n = config.n_voters
 
     bases = [
@@ -333,6 +360,7 @@ def _aggregate_explanation_strict(
 
     selected: list[str] = []
     n_private = 0
+    last_token: str | None = None
 
     for _ in range(config.max_explanation_tokens):
         prefix = "".join(selected)
@@ -370,12 +398,69 @@ def _aggregate_explanation_strict(
 
         if private:
             n_private += 1
+
+        # 重复退化检测：同一 token 连续出现即停止
         if token.strip():
+            if token == last_token:
+                break
+            last_token = token
             selected.append(token)
         elif not base_clean:
             break
 
     return "".join(selected).strip(), n_private
+
+
+def _aggregate_explanation(
+    client,
+    config: Config,
+    query: str,
+    chunks_per_voter: list[list[Any]],
+    voter_answers: list[str],
+    baseline_answer: str,
+    budget: BudgetTracker,
+    rng: random.Random,
+) -> tuple[str, int]:
+    """一次性生成各 voter/baseline 的完整解释，再逐词做 DP 选择。
+
+    说明：4B 模型用 max_tokens=1 做严格自回归逐 token 会退化重复（如
+    "AnswerAnswer..."），因此改为一次性生成完整短句（连贯），再在词粒度上
+    套用「直方图 + 阈值 + 加噪」的逐 token 选择。
+    """
+    n = config.n_voters
+
+    bases = [
+        _explain_messages(config, query, chunks, ans)
+        for chunks, ans in zip(chunks_per_voter, voter_answers)
+    ]
+    bases.append(_explain_messages(config, query, [], baseline_answer))
+
+    # 一次性生成完整解释（避免逐 token 贪心退化）
+    results = _batch_chat(client, config, bases, max_tokens=32)
+    voter_reasons = [r[0] for r in results[:n]]
+    baseline_reason = results[n][0]
+
+    base_words = baseline_reason.split()
+    voter_words = [r.split() for r in voter_reasons]
+
+    selected: list[str] = []
+    n_private = 0
+
+    for t in range(config.max_explanation_tokens):
+        base_tok = base_words[t] if t < len(base_words) else ""
+        v_toks = [w[t] if t < len(w) else "" for w in voter_words]
+        nonempty = [tok for tok in v_toks if tok]
+
+        if not base_tok and not nonempty:
+            break
+
+        token, private, _ = select_token(nonempty, base_tok, config, budget, rng)
+        if private:
+            n_private += 1
+        if token.strip():
+            selected.append(token)
+
+    return " ".join(selected).strip(), n_private
 
 
 # ---------------------------------------------------------------------------
@@ -405,15 +490,21 @@ def answer_dp_rag(
     voter_answers = [_normalize_answer(r[0]) for r in classify_results[:n]]
     baseline_answer = _normalize_answer(classify_results[n][0])
 
-    answer, answer_private, answer_budget_ok = select_token(
+    answer, answer_private, answer_budget_ok = select_answer(
         voter_answers, baseline_answer, config, budget, rng
     )
 
-    # 3. 解释（严格逐 token，每步并发）
-    explanation, n_private_tokens = _aggregate_explanation_strict(
-        client, config, query, chunks_per_voter,
-        voter_answers, baseline_answer, budget, rng,
-    )
+    # 3. 解释（严格逐 token 或 一次性生成 + 逐词 DP 选择）
+    if config.dp_strict_per_token:
+        explanation, n_private_tokens = _aggregate_explanation_strict(
+            client, config, query, chunks_per_voter,
+            voter_answers, baseline_answer, budget, rng,
+        )
+    else:
+        explanation, n_private_tokens = _aggregate_explanation(
+            client, config, query, chunks_per_voter,
+            voter_answers, baseline_answer, budget, rng,
+        )
 
     return {
         "answer": answer,

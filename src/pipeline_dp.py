@@ -26,7 +26,7 @@ from src.reranker import build_reranker
 
 def _run_group_dp(
     chat_model, client, vector_store, sampled_records, config: Config,
-    membership: str, rng, reranker,
+    membership: str, rng, reranker, csv_path, json_path,
 ):
     detailed_docs = []
     flat_rows = []
@@ -34,7 +34,7 @@ def _run_group_dp(
     total_private_tokens = 0
 
     desc = "测试成员文档(DP)" if membership == "member" else "测试非成员文档(DP)"
-    for record in tqdm(sampled_records, desc=desc):
+    for document_index, record in enumerate(tqdm(sampled_records, desc=desc), start=1):
         target_text, _, _ = data_module.extract_document_text(record, config)
         target_source_line = record.get("_source_line")
         target_id = data_module.extract_original_id(record, target_source_line, config)
@@ -143,8 +143,12 @@ def _run_group_dp(
         scores = [q["signal_score"] for q in doc_result["questions"]]
         matches = [q["answer_matches"] for q in doc_result["questions"]]
         retrievals = [q["target_retrieved"] for q in doc_result["questions"]]
+        private_flags = [q["answer_private"] for q in doc_result["questions"]]
 
         doc_result["mia_score"] = scoring.aggregate_score(scores)
+        doc_result["private_rate"] = (
+            sum(private_flags) / len(private_flags) if private_flags else 0.0
+        )
         doc_result["answer_match_rate"] = (
             sum(matches) / len(matches) if matches else 0.0
         )
@@ -152,6 +156,18 @@ def _run_group_dp(
             sum(retrievals) / len(retrievals) if retrievals else 0.0
         )
         detailed_docs.append(doc_result)
+
+        # 每 10 篇保存一次断点，避免中途崩溃丢失全部结果
+        if document_index % 10 == 0:
+            _save(flat_rows, detailed_docs, csv_path, json_path)
+            label = "成员" if membership == "member" else "非成员"
+            print(
+                f"[CHECKPOINT] 已保存 {document_index}/{len(sampled_records)} "
+                f"篇{label}文档"
+            )
+
+    # 收尾保存剩余部分
+    _save(flat_rows, detailed_docs, csv_path, json_path)
 
     summary = {
         "total_private_answers": total_private_answers,
@@ -167,6 +183,36 @@ def _save(flat_rows, detailed_docs, csv_path, json_path):
     pd.DataFrame(flat_rows).to_csv(csv_path, index=False, encoding="utf-8-sig")
     with json_path.open("w", encoding="utf-8") as fh:
         json.dump(detailed_docs, fh, ensure_ascii=False, indent=2)
+
+
+def _evaluate_private_signal(member_docs, nonmember_docs) -> dict:
+    """用「私有知识使用率 private_rate」作为 DP 方案的成员信号做评估。
+
+    说明：k=2 时最终答案(noisy argmax)会被多数 unknown 主导而退化，
+    但 answer_private（是否有 voter 与 baseline 不一致）仍携带成员信号。
+    """
+    import numpy as np
+    from sklearn.metrics import roc_auc_score
+
+    m_scores = [float(d.get("private_rate", 0.0)) for d in member_docs]
+    n_scores = [float(d.get("private_rate", 0.0)) for d in nonmember_docs]
+    labels = [1] * len(m_scores) + [0] * len(n_scores)
+    scores = m_scores + n_scores
+
+    auc = (
+        float(roc_auc_score(labels, scores))
+        if len(set(labels)) == 2 and scores
+        else float("nan")
+    )
+    return {
+        "member_mean_private_rate": float(np.mean(m_scores)) if m_scores else float("nan"),
+        "nonmember_mean_private_rate": float(np.mean(n_scores)) if n_scores else float("nan"),
+        "mean_difference": (
+            float(np.mean(m_scores)) - float(np.mean(n_scores))
+            if m_scores and n_scores else float("nan")
+        ),
+        "roc_auc": auc,
+    }
 
 
 def run_dp_experiment(config: Config) -> dict:
@@ -196,18 +242,17 @@ def run_dp_experiment(config: Config) -> dict:
         nonmembers, min(config.nonmember_test_count, len(nonmembers))
     )
 
-    # 5. 测试成员与非成员
+    # 5. 测试成员与非成员（内部每 10 篇自动保存断点）
     member_flat, member_docs, member_budget = _run_group_dp(
         chat_model, client, vector_store, sampled_members, config, "member",
         rng, reranker,
+        config.member_result_dp_csv, config.member_result_dp_json,
     )
     nonmember_flat, nonmember_docs, nonmember_budget = _run_group_dp(
         chat_model, client, vector_store, sampled_nonmembers, config, "nonmember",
         rng, reranker,
+        config.nonmember_result_dp_csv, config.nonmember_result_dp_json,
     )
-
-    _save(member_flat, member_docs, config.member_result_dp_csv, config.member_result_dp_json)
-    _save(nonmember_flat, nonmember_docs, config.nonmember_result_dp_csv, config.nonmember_result_dp_json)
 
     # 6. 评估
     report = evaluate(config.member_result_dp_json, config.nonmember_result_dp_json)
@@ -220,6 +265,7 @@ def run_dp_experiment(config: Config) -> dict:
         "member": member_budget,
         "nonmember": nonmember_budget,
     }
+    report["dp_private_signal"] = _evaluate_private_signal(member_docs, nonmember_docs)
 
     with config.evaluation_report_dp.open("w", encoding="utf-8") as fh:
         json.dump(report, fh, ensure_ascii=False, indent=2)

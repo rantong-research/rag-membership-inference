@@ -32,8 +32,8 @@ chroma_*/
 # ================= 数据集（私有内容，自行准备，不提交） =================
 real_10k.jsonl
 synth_10k.jsonl
-real_8k_members.jsonl
-real_2k_nonmembers.jsonl
+real_*_members.jsonl
+real_*_nonmembers.jsonl
 real_10k_split.json
 
 # ================= 实验输出（可重新生成） =================

@@ -169,15 +169,23 @@ def _save(flat_rows, detailed_docs, csv_path, json_path):
 
 
 def ensure_split(config: Config) -> None:
-    """若成员/非成员划分文件缺失，则从 real_10k.jsonl 重新划分。"""
+    """若成员/非成员划分文件缺失或规模与配置不符，则从 real_10k.jsonl 重新划分。"""
     needed = (
         config.member_output_path,
         config.nonmember_output_path,
         config.split_manifest_path,
     )
     if all(path.exists() for path in needed):
-        return
-    print("[INFO] 划分文件缺失，从 real_10k.jsonl 重新划分。")
+        try:
+            with config.split_manifest_path.open("r", encoding="utf-8") as fh:
+                manifest = json.load(fh)
+            if manifest.get("member_count") == config.knowledge_base_size:
+                return
+            print("[INFO] 划分规模与配置不一致，重新划分。")
+        except Exception:
+            print("[INFO] 划分清单读取失败，重新划分。")
+    else:
+        print("[INFO] 划分文件缺失，从 real_10k.jsonl 重新划分。")
     data_module.split_and_save(config)
 
 

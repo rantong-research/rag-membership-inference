@@ -21,11 +21,11 @@ class Config:
 
     # ---- 数据 ----
     data_path: Path = Path("real_10k.jsonl")
-    member_output_path: Path = Path("real_8k_members.jsonl")
-    nonmember_output_path: Path = Path("real_2k_nonmembers.jsonl")
+    member_output_path: Path = Path("real_9500_members.jsonl")
+    nonmember_output_path: Path = Path("real_500_nonmembers.jsonl")
     split_manifest_path: Path = Path("real_10k_split.json")
 
-    knowledge_base_size: int = 8000
+    knowledge_base_size: int = 9500
     data_seed: int = 42
 
     # ---- Embedding / 向量库 ----
@@ -34,8 +34,8 @@ class Config:
     device: str = "cuda"
     normalize_embeddings: bool = True
     encode_batch_size: int = 64
-    persist_directory: Path = Path("./chroma_bge_base_en_v15")
-    collection_name: str = "real_8k_bge_base_en"
+    persist_directory: Path = Path("./chroma_bge_base_en_v15_9500")
+    collection_name: str = "real_9500_bge_base_en"
 
     # ---- 大语言模型（本地部署）----
     chat_model: str = "qwen3-4b"
@@ -47,8 +47,8 @@ class Config:
     base_url_env: str = "base_url"
 
     # ---- 测试 ----
-    member_test_count: int = 100
-    nonmember_test_count: int = 100
+    member_test_count: int = 50
+    nonmember_test_count: int = 50
     questions_per_document: int = 3
     retrieve_k: int = 10
     member_seed: int = 2027
@@ -76,6 +76,8 @@ class Config:
     dp_total_budget: float = 40.0
     dp_per_token_budget: float = 2.0
     dp_threshold_ratio: float = 0.5
+    dp_answer_threshold_ratio: float = 0.0
+    dp_strict_per_token: bool = True
     max_explanation_tokens: int = 24
     dp_random_seed: int = 2028
 

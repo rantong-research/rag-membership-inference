@@ -48,9 +48,12 @@ JSON format:
 
 
 def generate_semantic_probes(
-    chat_model, document_text: str, question_count: int, max_retries: int = 3
+    chat_model, document_text: str, question_count: int, max_retries: int = 3,
+    max_doc_chars: int = 1500,
 ):
     """为候选文档生成检索摘要与多个 Yes/No 探测问题（带重试）。"""
+    # 截断超长文档，避免超出本地模型 2048 tokens 的上下文限制
+    document_text = (document_text or "")[:max_doc_chars]
     last_error: Exception | None = None
     for attempt in range(1, max_retries + 1):
         try:
